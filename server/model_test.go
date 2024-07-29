@@ -115,11 +115,6 @@ func TestExtractFromZipFile(t *testing.T) {
 	}
 }
 
-type function struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
-}
-
 func readFile(t *testing.T, base, name string) *bytes.Buffer {
 	t.Helper()
 
@@ -167,6 +162,11 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 		{"command-r-plus", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
 		{"firefunction", ` functools[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
 		{"firefunction", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
+		{"llama3-groq-tool-use", `<tool_call>
+{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}
+{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
+</tool_call>`, true},
+		{"xlam", `{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`, true},
 	}
 
 	var tools []api.Tool
@@ -181,20 +181,18 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 
 	calls := []api.ToolCall{
 		{
-			Type: "function",
-			Function: function{
+			Function: api.ToolCallFunction{
 				Name: "get_current_weather",
-				Arguments: map[string]any{
+				Arguments: api.ToolCallFunctionArguments{
 					"format":   "fahrenheit",
 					"location": "San Francisco, CA",
 				},
 			},
 		},
 		{
-			Type: "function",
-			Function: function{
+			Function: api.ToolCallFunction{
 				Name: "get_current_weather",
-				Arguments: map[string]any{
+				Arguments: api.ToolCallFunctionArguments{
 					"format":   "celsius",
 					"location": "Toronto, Canada",
 				},
@@ -228,11 +226,6 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 				}
 
 				if tt.ok {
-					for i := range actual {
-						// ID is randomly generated so clear it for comparison
-						actual[i].ID = ""
-					}
-
 					if diff := cmp.Diff(actual, calls); diff != "" {
 						t.Errorf("mismatch (-got +want):\n%s", diff)
 					}

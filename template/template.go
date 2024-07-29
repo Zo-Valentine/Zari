@@ -23,6 +23,7 @@ import (
 var indexBytes []byte
 
 //go:embed *.gotmpl
+//go:embed *.json
 var templatesFS embed.FS
 
 var templatesOnce = sync.OnceValues(func() ([]*named, error) {
@@ -39,6 +40,15 @@ var templatesOnce = sync.OnceValues(func() ([]*named, error) {
 
 		// normalize line endings
 		t.Bytes = bytes.ReplaceAll(bts, []byte("\r\n"), []byte("\n"))
+
+		params, err := templatesFS.ReadFile(t.Name + ".json")
+		if err != nil {
+			continue
+		}
+
+		if err := json.Unmarshal(params, &t.Parameters); err != nil {
+			return nil, err
+		}
 	}
 
 	return templates, nil
@@ -48,6 +58,10 @@ type named struct {
 	Name     string `json:"name"`
 	Template string `json:"template"`
 	Bytes    []byte
+
+	Parameters *struct {
+		Stop []string `json:"stop"`
+	}
 }
 
 func (t named) Reader() io.Reader {
@@ -150,7 +164,9 @@ func (t *Template) Vars() []string {
 
 type Values struct {
 	Messages []api.Message
-	Tools    []api.Tool
+	api.Tools
+	Prompt string
+	Suffix string
 
 	// forceLegacy is a flag used to test compatibility with legacy templates
 	forceLegacy bool
@@ -204,11 +220,18 @@ func (t *Template) Subtree(fn func(parse.Node) bool) *template.Template {
 
 func (t *Template) Execute(w io.Writer, v Values) error {
 	system, messages := collate(v.Messages)
-	if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
+	if v.Prompt != "" && v.Suffix != "" {
+		return t.Template.Execute(w, map[string]any{
+			"Prompt":   v.Prompt,
+			"Suffix":   v.Suffix,
+			"Response": "",
+		})
+	} else if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
 		return t.Template.Execute(w, map[string]any{
 			"System":   system,
 			"Messages": messages,
 			"Tools":    v.Tools,
+			"Response": "",
 		})
 	}
 
@@ -255,6 +278,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	nodes := deleteNode(t.Template.Root.Copy(), func(n parse.Node) bool {
 		if field, ok := n.(*parse.FieldNode); ok && slices.Contains(field.Ident, "Response") {
 			cut = true
+			return false
 		}
 
 		return cut
@@ -262,8 +286,9 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 
 	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
 	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
-		"System": system,
-		"Prompt": prompt,
+		"System":   system,
+		"Prompt":   prompt,
+		"Response": response,
 	}); err != nil {
 		return err
 	}
